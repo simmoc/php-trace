@@ -384,11 +384,22 @@ static void php_trace_execute_ex(zend_execute_data *execute_data)
         // Check for uncaught exceptions (PHP 8+)
         if (EG(exception)) {
             span.status_code = php_trace::SpanStatusCode::ERROR;
-            zend_object *ex = EG(exception);
-            if (ex) {
-                zval *msg_zv = zend_read_property(ex->ce, ex, ZEND_STRL("message"), 0, NULL);
-                if (msg_zv && Z_TYPE_P(msg_zv) == IS_STRING) {
-                    span.status_message = std::string(Z_STRVAL_P(msg_zv), Z_STRLEN_P(msg_zv));
+            zval *exception_zv = EG(exception);
+            if (exception_zv && Z_TYPE_P(exception_zv) == IS_OBJECT) {
+                zend_object *exception_obj = Z_OBJ_P(exception_zv);
+                if (exception_obj && exception_obj->ce) {
+                    zval *msg_zv = zend_read_property(exception_obj->ce, exception_obj, ZEND_STRL("message"), 0, NULL);
+                    if (msg_zv && Z_TYPE_P(msg_zv) == IS_STRING) {
+                        span.status_message = std::string(Z_STRVAL_P(msg_zv), Z_STRLEN_P(msg_zv));
+                    } else if (msg_zv && Z_TYPE_P(msg_zv) != IS_UNDEF) {
+                        zval tmp = *msg_zv;
+                        zval_copy_ctor(&tmp);
+                        convert_to_string(&tmp);
+                        if (Z_TYPE(tmp) == IS_STRING) {
+                            span.status_message = std::string(Z_STRVAL(tmp), Z_STRLEN(tmp));
+                        }
+                        zval_ptr_dtor(&tmp);
+                    }
                 }
             }
         } else {
