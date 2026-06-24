@@ -238,7 +238,7 @@ std::string build_tempo_payload(const std::vector<Span> &spans, const LokiConfig
         os << ",\"kind\":" << (span.kind == SpanKind::CLIENT ? 3 : 1);
         os << ",\"startTimeUnixNano\":" << span.start_time_ns;
         os << ",\"endTimeUnixNano\":" << span.end_time_ns;
-        os << ",\"status\":{\"code\":\"" << (span.status_code == SpanStatusCode::ERROR ? "ERROR" : "OK") << "\"";
+        os << ",\"status\":{\"code\":" << (span.status_code == SpanStatusCode::ERROR ? 2 : 1);
         if (!span.status_message.empty()) {
             os << ",\"message\":\"" << json_escape(span.status_message) << "\"";
         }
@@ -250,7 +250,22 @@ std::string build_tempo_payload(const std::vector<Span> &spans, const LokiConfig
             for (const auto &kv : span.attributes) {
                 if (!first_attr) os << ",";
                 first_attr = false;
-                os << "{\"key\":\"" << json_escape(kv.first) << "\",\"value\":{\"stringValue\":\"" << json_escape(kv.second.type == AttributeValue::STRING ? kv.second.str_val : std::to_string(kv.second.int_val)) << "\"}}";
+                os << "{\"key\":\"" << json_escape(kv.first) << "\",\"value\":{";
+                switch (kv.second.type) {
+                    case AttributeValue::STRING:
+                        os << "\"stringValue\":\"" << json_escape(kv.second.str_val) << "\"";
+                        break;
+                    case AttributeValue::INT:
+                        os << "\"intValue\":\"" << kv.second.int_val << "\"";
+                        break;
+                    case AttributeValue::DOUBLE:
+                        os << "\"doubleValue\":\"" << kv.second.double_val << "\"";
+                        break;
+                    case AttributeValue::BOOL:
+                        os << "\"boolValue\":" << (kv.second.bool_val ? "true" : "false");
+                        break;
+                }
+                os << "}}";
             }
             os << "]";
         }
@@ -258,7 +273,7 @@ std::string build_tempo_payload(const std::vector<Span> &spans, const LokiConfig
         os << "}";
     }
 
-    os << "]}]}";
+    os << "]}]}]}";
     return os.str();
 }
 

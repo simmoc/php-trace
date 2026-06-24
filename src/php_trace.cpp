@@ -101,10 +101,10 @@ PHP_INI_BEGIN()
     STD_PHP_INI_ENTRY("php_trace.loki.flush_interval", "5",   PHP_INI_SYSTEM, OnUpdateLong,   loki_flush_interval,  zend_php_trace_globals, php_trace_globals)
     STD_PHP_INI_ENTRY("php_trace.sample_rate",         "1.0", PHP_INI_SYSTEM, OnUpdateReal,   sample_rate,          zend_php_trace_globals, php_trace_globals)
     STD_PHP_INI_ENTRY("php_trace.max_spans",           "65536", PHP_INI_SYSTEM, OnUpdateLong, max_spans,           zend_php_trace_globals, php_trace_globals)
-    STD_PHP_INI_ENTRY("php_trace.capture_args",        "0",  PHP_INI_SYSTEM, OnUpdateBool,   capture_args,         zend_php_trace_globals, php_trace_globals)
-    STD_PHP_INI_ENTRY("php_trace.capture_return",      "0",  PHP_INI_SYSTEM, OnUpdateBool,   capture_return,       zend_php_trace_globals, php_trace_globals)
+    STD_PHP_INI_ENTRY("php_trace.capture_args",        "1",  PHP_INI_SYSTEM, OnUpdateBool,   capture_args,         zend_php_trace_globals, php_trace_globals)
+    STD_PHP_INI_ENTRY("php_trace.capture_return",      "1",  PHP_INI_SYSTEM, OnUpdateBool,   capture_return,       zend_php_trace_globals, php_trace_globals)
     STD_PHP_INI_ENTRY("php_trace.max_arg_length",      "256", PHP_INI_SYSTEM, OnUpdateLong,   max_arg_length,       zend_php_trace_globals, php_trace_globals)
-    STD_PHP_INI_ENTRY("php_trace.trace_internal",      "1",  PHP_INI_SYSTEM, OnUpdateBool,   trace_internal,       zend_php_trace_globals, php_trace_globals)
+    STD_PHP_INI_ENTRY("php_trace.trace_internal",      "0",  PHP_INI_SYSTEM, OnUpdateBool,   trace_internal,       zend_php_trace_globals, php_trace_globals)
     STD_PHP_INI_ENTRY("php_trace.trace_user",          "0",  PHP_INI_SYSTEM, OnUpdateBool,   trace_user,           zend_php_trace_globals, php_trace_globals)
     STD_PHP_INI_ENTRY("php_trace.include_pattern",     "^(mysqli_|mysql_|PDO::|PDOStatement::|curl_|fsockopen|stream_socket_client|file_get_contents|fopen|stream_socket_|socket_|redis_|ldap_|pg_|sqlite_)",   PHP_INI_SYSTEM, OnUpdateString, include_pattern,      zend_php_trace_globals, php_trace_globals)
     STD_PHP_INI_ENTRY("php_trace.exclude_pattern",     "",   PHP_INI_SYSTEM, OnUpdateString, exclude_pattern,      zend_php_trace_globals, php_trace_globals)
@@ -150,6 +150,178 @@ static php_trace::LokiConfig php_trace_build_loki_config()
 }
 
 // ===========================================================================
+// Safely convert a zval to a string representation (for args/return value)
+// Avoids calling __toString to prevent side effects.
+// depth: recursion depth limit to prevent infinite loops
+// ===========================================================================
+static std::string php_trace_zval_to_string_impl(zval *zv, long max_len, int depth)
+{
+    if (!zv) return "(null)";
+    if (depth > 3) return "(max depth reached)"; // Prevent infinite recursion
+
+    switch (Z_TYPE_P(zv)) {
+        case IS_NULL:
+            return "(null)";
+
+        case IS_TRUE:
+            return "true";
+
+        case IS_FALSE:
+            return "false";
+
+        case IS_LONG:
+            return std::to_string(Z_LVAL_P(zv));
+
+        case IS_DOUBLE:
+            return std::to_string(Z_DVAL_P(zv));
+
+        case IS_STRING: {
+            size_t len = Z_STRLEN_P(zv);
+            if (max_len > 0 && len > static_cast<size_t>(max_len)) {
+                std::string truncated(Z_STRVAL_P(zv), max_len);
+                truncated += "...(" + std::to_string(len) + " bytes)";
+                return truncated;
+            }
+            return std::string(Z_STRVAL_P(zv), len);
+        }
+
+        case IS_ARRAY: {
+            std::ostringstream oss;
+            oss << "{";
+            HashTable *ht = Z_ARRVAL_P(zv);
+            zend_bool first = 1;
+            zval *val;
+            zend_string *key;
+            zend_ulong idx;
+
+            ZEND_HASH_FOREACH_KEY_VAL(ht, idx, key, val) {
+                if (!first) oss << ", ";
+                first = 0;
+
+                // Key
+                if (key) {
+                    oss << "\"" << ZSTR_VAL(key) << "\": ";
+                } else {
+                    oss << idx << ": ";
+                }
+
+                // Value (recursive, with depth limit)
+                if (val) {
+                    if (Z_TYPE_P(val) == IS_ARRAY) {
+                        if (depth < 2) {
+                            oss << php_trace_zval_to_string_impl(val, max_len, depth + 1);
+                        } else {
+                            oss << "array(" << zend_array_count(Z_ARRVAL_P(val)) << ")";
+                        }
+                    } else {
+                        oss << php_trace_zval_to_string_impl(val, max_len, depth + 1);
+                    }
+                } else {
+                    oss << "null";
+                }
+            } ZEND_HASH_FOREACH_END();
+
+            oss << "}";
+            return oss.str();
+        }
+
+        case IS_OBJECT:
+            if (Z_OBJ_P(zv)->ce && Z_OBJ_P(zv)->ce->name) {
+                return "object(" + std::string(ZSTR_VAL(Z_OBJ_P(zv)->ce->name)) + ")";
+            }
+            return "object";
+
+        case IS_RESOURCE:
+            return "resource";
+
+        case IS_REFERENCE:
+            return php_trace_zval_to_string_impl(Z_REFVAL_P(zv), max_len, depth + 1);
+
+        default:
+            return "(unknown)";
+    }
+}
+
+static std::string php_trace_zval_to_string(zval *zv, long max_len)
+{
+    std::string result = php_trace_zval_to_string_impl(zv, max_len, 0);
+    
+    // Truncate final result if too long
+    if (max_len > 0 && result.length() > static_cast<size_t>(max_len)) {
+        result = result.substr(0, max_len) + "...(truncated)";
+    }
+    return result;
+}
+
+// ===========================================================================
+// Simple zval to string (no truncation, for internal use)
+// ===========================================================================
+static std::string php_trace_zval_to_string_simple(zval *zv)
+{
+    if (!zv) return "(null)";
+
+    switch (Z_TYPE_P(zv)) {
+        case IS_NULL:    return "(null)";
+        case IS_TRUE:    return "true";
+        case IS_FALSE:   return "false";
+        case IS_LONG:    return std::to_string(Z_LVAL_P(zv));
+        case IS_DOUBLE:  return std::to_string(Z_DVAL_P(zv));
+        case IS_STRING:  return "\"" + std::string(Z_STRVAL_P(zv), Z_STRLEN_P(zv)) + "\"";
+        case IS_ARRAY:   return "array(...)";
+        case IS_OBJECT:  return "object(...)";
+        default:          return "(unknown)";
+    }
+}
+
+// ===========================================================================
+// Capture function arguments and add them to span attributes
+// ===========================================================================
+static void php_trace_capture_args(zend_execute_data *execute_data, php_trace::Span &span)
+{
+    if (!PHTRACE_G(capture_args) || !execute_data || !execute_data->func) {
+        return;
+    }
+
+    long max_len = PHTRACE_G(max_arg_length);
+    zend_function *func = execute_data->func;
+
+#if PHP_VERSION_ID >= 80000
+    uint32_t num_args = ZEND_CALL_NUM_ARGS(execute_data);
+#else
+    uint32_t num_args = func->common.num_args;
+#endif
+
+    if (num_args == 0) return;
+
+    // Capture each argument
+    for (uint32_t i = 0; i < num_args; i++) {
+        zval *arg = ZEND_CALL_ARG(execute_data, i + 1);
+        if (!arg) continue;
+
+        std::string key = "arg." + std::to_string(i);
+        std::string val = php_trace_zval_to_string(arg, max_len);
+        span.attributes[key] = php_trace::AttributeValue::from_string(val);
+    }
+
+    // Also add argument count
+    span.attributes["php.args_count"] = php_trace::AttributeValue::from_int(num_args);
+}
+
+// ===========================================================================
+// Capture return value and add it to span attributes
+// ===========================================================================
+static void php_trace_capture_return(zval *return_value, php_trace::Span &span)
+{
+    if (!PHTRACE_G(capture_return) || !return_value) {
+        return;
+    }
+
+    long max_len = PHTRACE_G(max_arg_length);
+    std::string val = php_trace_zval_to_string(return_value, max_len);
+    span.attributes["php.return_value"] = php_trace::AttributeValue::from_string(val);
+}
+
+// ===========================================================================
 // Time helper
 // ===========================================================================
 uint64_t php_trace_now_ns()
@@ -157,6 +329,19 @@ uint64_t php_trace_now_ns()
     return static_cast<uint64_t>(
         std::chrono::high_resolution_clock::now().time_since_epoch().count()
     );
+}
+
+// ===========================================================================
+// Safely extract a human-readable exception marker without triggering
+// object stringification (which can cause __toString() TypeErrors).
+// ===========================================================================
+static std::string php_trace_safe_exception_message(zend_object *exception_obj)
+{
+    if (!exception_obj || !exception_obj->ce || !exception_obj->ce->name) {
+        return "exception";
+    }
+
+    return std::string(ZSTR_VAL(exception_obj->ce->name));
 }
 
 // ===========================================================================
@@ -172,7 +357,7 @@ static std::string php_trace_get_function_name(zend_execute_data *execute_data)
         std::string name;
 
         // For methods: ClassName::methodName
-#if PHP_VERSION_ID >= 80200
+#if PHP_VERSION_ID >= 80000
         if (zend_get_called_scope(execute_data) && func->common.scope) {
 #else
         if (execute_data->called_scope && func->common.scope) {
@@ -253,9 +438,9 @@ bool php_trace_should_trace(const zend_function *func, const zend_string *fname)
 static void php_trace_extract_trace_context(TraceContext *ctx)
 {
     zval *server = nullptr;
-    zend_is_auto_global(ZSTR_KNOWN(ZEND_STR_AUTOGLOBAL_SERVER));
+    zend_is_auto_global_str(ZEND_STRL("_SERVER"));
 
-#if PHP_VERSION_ID >= 80100
+#if PHP_VERSION_ID >= 80000
     if (Z_TYPE(PG(http_globals)[TRACK_VARS_SERVER]) == IS_ARRAY) {
         server = &PG(http_globals)[TRACK_VARS_SERVER];
     }
@@ -384,33 +569,30 @@ static void php_trace_execute_ex(zend_execute_data *execute_data)
         // Check for uncaught exceptions (PHP 8+)
         if (EG(exception)) {
             span.status_code = php_trace::SpanStatusCode::ERROR;
-            zval *exception_zv = EG(exception);
-            if (exception_zv && Z_TYPE_P(exception_zv) == IS_OBJECT) {
-                zend_object *exception_obj = Z_OBJ_P(exception_zv);
-                if (exception_obj && exception_obj->ce) {
-                    zval *msg_zv = zend_read_property(exception_obj->ce, exception_obj, ZEND_STRL("message"), 0, NULL);
-                    if (msg_zv && Z_TYPE_P(msg_zv) == IS_STRING) {
-                        span.status_message = std::string(Z_STRVAL_P(msg_zv), Z_STRLEN_P(msg_zv));
-                    } else if (msg_zv && Z_TYPE_P(msg_zv) != IS_UNDEF) {
-                        zval tmp = *msg_zv;
-                        zval_copy_ctor(&tmp);
-                        convert_to_string(&tmp);
-                        if (Z_TYPE(tmp) == IS_STRING) {
-                            span.status_message = std::string(Z_STRVAL(tmp), Z_STRLEN(tmp));
-                        }
-                        zval_ptr_dtor(&tmp);
-                    }
-                }
+            std::string msg = php_trace_safe_exception_message(EG(exception));
+            if (!msg.empty()) {
+                span.status_message = std::move(msg);
             }
         } else {
             span.status_code = php_trace::SpanStatusCode::OK;
+        }
+
+        // Capture return value for user functions (after original_execute_ex)
+        if (PHTRACE_G(capture_return) && user_func && execute_data->return_value) {
+            if (Z_TYPE_P(execute_data->return_value) != IS_UNDEF) {
+                php_trace_capture_return(execute_data->return_value, span);
+            }
         }
 
         // Set this span as the parent for nested calls
         ctx->parent_span_id = span.span_id;
         ctx->depth = depth_before;
 
-        // Push to buffer
+        // Capture arguments
+        if (PHTRACE_G(capture_args)) {
+            php_trace_capture_args(execute_data, span);
+        }
+
         g_span_buffer->try_push(std::move(span));
     }
 }
@@ -442,7 +624,8 @@ static void php_trace_execute_internal(zend_execute_data *execute_data, zval *re
         start_ns = php_trace_now_ns();
     }
 
-    // Call original
+    // Internal hook is left disabled on PHP 8.3+ to avoid runtime
+    // incompatibilities with the current Zend execution path.
     if (original_execute_internal) {
         original_execute_internal(execute_data, return_value);
     }
@@ -472,6 +655,14 @@ static void php_trace_execute_internal(zend_execute_data *execute_data, zval *re
         ctx->parent_span_id = span.span_id;
         ctx->depth = depth_before;
 
+        // Capture arguments and return value
+        if (PHTRACE_G(capture_args)) {
+            php_trace_capture_args(execute_data, span);
+        }
+        if (PHTRACE_G(capture_return) && return_value) {
+            php_trace_capture_return(return_value, span);
+        }
+
         g_span_buffer->try_push(std::move(span));
     }
 }
@@ -487,7 +678,7 @@ void php_trace_install_hook()
     original_execute_ex = zend_execute_ex;
     zend_execute_ex = php_trace_execute_ex;
 
-    if (PHTRACE_G(trace_internal)) {
+    if (PHTRACE_G(trace_internal) && PHP_VERSION_ID < 80300) {
         original_execute_internal = zend_execute_internal;
         zend_execute_internal = php_trace_execute_internal;
     }
@@ -618,6 +809,10 @@ PHP_MINFO_FUNCTION(php_trace)
 
 PHP_FUNCTION(php_trace_status)
 {
+#if PHP_VERSION_ID >= 80100
+    ZEND_PARSE_PARAMETERS_NONE();
+#endif
+
     array_init(return_value);
 
     add_assoc_bool(return_value,  "enabled",        static_cast<zend_bool>(PHTRACE_G(enabled)));
@@ -752,6 +947,7 @@ PHP_FUNCTION(php_trace_finalize_span)
 // ===========================================================================
 // Function table
 // ===========================================================================
+#if PHP_VERSION_ID >= 80200
 ZEND_BEGIN_ARG_INFO(arginfo_php_trace_status, 0)
 ZEND_END_ARG_INFO()
 
@@ -764,6 +960,33 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_php_trace_finalize_span, 0, 0, 1)
     ZEND_ARG_TYPE_INFO(0, span_id, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, status, IS_LONG, 1)
 ZEND_END_ARG_INFO()
+#elif PHP_VERSION_ID >= 80100
+// PHP 8.1: zend_internal_arg_info has 4 fields (name, type, pass_by_ref, is_variadic)
+static const zend_internal_arg_info arginfo_php_trace_status[] = {
+    { (const char*)(zend_uintptr_t)(0), {0}, 0, 0 },
+};
+static const zend_internal_arg_info arginfo_php_trace_create_span[] = {
+    { (const char*)(zend_uintptr_t)(1), {0}, 0, 0 },
+    { (const char*)(zend_uintptr_t)(0), {0}, 0, 0 },
+};
+static const zend_internal_arg_info arginfo_php_trace_finalize_span[] = {
+    { (const char*)(zend_uintptr_t)(1), {0}, 0, 0 },
+    { (const char*)(zend_uintptr_t)(0), {0}, 0, 0 },
+};
+#else
+// PHP 8.0: zend_internal_arg_info has 3 fields (name, type, default_value)
+static const zend_internal_arg_info arginfo_php_trace_status[] = {
+    { (const char*)(zend_uintptr_t)(0), {0}, NULL },
+};
+static const zend_internal_arg_info arginfo_php_trace_create_span[] = {
+    { (const char*)(zend_uintptr_t)(1), {0}, NULL },
+    { (const char*)(zend_uintptr_t)(0), {0}, NULL },
+};
+static const zend_internal_arg_info arginfo_php_trace_finalize_span[] = {
+    { (const char*)(zend_uintptr_t)(1), {0}, NULL },
+    { (const char*)(zend_uintptr_t)(0), {0}, NULL },
+};
+#endif
 
 static const zend_function_entry php_trace_functions[] = {
     PHP_FE(php_trace_status,         arginfo_php_trace_status)
