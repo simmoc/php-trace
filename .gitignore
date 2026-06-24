@@ -1,0 +1,48 @@
+# Build artifacts
+*.o
+*.lo
+*.la
+*.so
+*.dll
+*.dylib
+.libs/
+.deps/
+Makefile
+Makefile.fragments
+Makefile.objects
+acinclude.m4
+aclocal.m4
+autom4te.cache/
+build/
+config.guess
+config.h
+config.h.in
+config.log
+config.nice
+config.status
+config.sub
+configure
+configure.in
+install-sh
+libtool
+ltmain.sh
+missing
+mkinstalldirs
+run-tests.php
+
+# CMake build
+build/
+cmake-build-*/
+
+# IDE
+.idea/
+.vscode/
+.github/
+.workbuddy/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

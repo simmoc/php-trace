@@ -1,0 +1,22 @@
+# docker/Dockerfile.php80 — PHP 8.0 with php-trace pre-installed
+#
+# Build:  docker build -f docker/Dockerfile.php80 -t php-trace:8.0 .
+# Run:    docker run --rm php-trace:8.0 php --ri php_trace
+
+FROM php-trace:8.0 AS built
+
+FROM php:8.0-cli
+
+# Copy the compiled extension from the builder
+COPY --from=built /usr/local/lib/php/extensions/ /usr/local/lib/php/extensions/
+COPY --from=built /usr/local/etc/php/conf.d/docker-php-ext-php_trace.ini /usr/local/etc/php/conf.d/
+
+# Install libcurl runtime (required by the extension)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libcurl4 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy test script
+COPY test_trace.php /test_trace.php
+
+CMD ["php", "--ri", "php_trace"]

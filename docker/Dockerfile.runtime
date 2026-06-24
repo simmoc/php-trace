@@ -1,0 +1,55 @@
+# docker/Dockerfile.runtime — Slim PHP runtime with php-trace pre-installed
+#
+# This is a thin runtime image: it first builds the extension in a
+# build stage, then copies only the .so + ini into a clean PHP CLI image.
+#
+# Build:
+#   docker build -f docker/Dockerfile.runtime \
+#     --build-arg PHP_VERSION=8.3 \
+#     -t php-trace-runtime:8.3 .
+#
+# Run:
+#   docker run --rm -e php_trace.loki.endpoint=http://host:3100/loki/api/v1/push \
+#     -v $(pwd):/app php-trace-runtime:8.3 php /app/my-script.php
+
+# ── Stage 1: Build the extension ──────────────────────────────────────
+ARG  PHP_VERSION=8.3
+FROM php:${PHP_VERSION}-cli AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libcurl4-openssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+COPY include/ ./include/
+COPY src/     ./src/
+COPY config.m4 ./
+
+RUN phpize \
+    && ./configure --enable-php-trace \
+    && make -j$(nproc) \
+    && make install
+
+# ── Stage 2: Runtime ──────────────────────────────────────────────────
+FROM php:${PHP_VERSION}-cli
+
+# libcurl runtime library (needed by php_trace.so)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libcurl4 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy extension from builder
+COPY --from=builder /usr/local/lib/php/extensions/ /usr/local/lib/php/extensions/
+COPY --from=builder /usr/local/etc/php/conf.d/docker-php-ext-php_trace.ini /usr/local/etc/php/conf.d/
+
+# Default configuration
+RUN echo "php_trace.enabled=1" >> /usr/local/etc/php/conf.d/php_trace.ini \
+    && echo "php_trace.service_name=php-trace-runtime" >> /usr/local/etc/php/conf.d/php_trace.ini
+
+# Verify
+RUN php -m | grep php_trace
+
+LABEL maintainer="php-trace"
+LABEL php-version="${PHP_VERSION}"
+
+CMD ["php", "--ri", "php_trace"]

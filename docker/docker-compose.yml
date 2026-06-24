@@ -1,0 +1,204 @@
+# docker/docker-compose.yml — Multi-version PHP Trace build & test
+#
+# Build all versions:
+#   docker compose -f docker/docker-compose.yml build
+#
+# Build specific:
+#   docker compose -f docker/docker-compose.yml build php83
+#
+# Run test on specific version:
+#   docker compose -f docker/docker-compose.yml run --rm php83-test
+#
+
+version: "3.8"
+
+# ---------------------------------------------------------------------------
+# Loki + Grafana (for integration testing)
+# ---------------------------------------------------------------------------
+services:
+  loki:
+    image: grafana/loki:latest
+    container_name: php-trace-loki
+    ports:
+      - "3100:3100"
+    command:
+      - -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ../loki-config.yaml:/etc/loki/local-config.yaml:ro
+    networks:
+      - php-trace-net
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3100/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  tempo:
+    image: grafana/tempo:latest
+    container_name: php-trace-tempo
+    ports:
+      - "3200:3200"
+      - "4318:4318"
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ../tempo.yaml:/etc/tempo.yaml:ro
+    networks:
+      - php-trace-net
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: php-trace-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - ../grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+    networks:
+      - php-trace-net
+    depends_on:
+      loki:
+        condition: service_healthy
+      tempo:
+        condition: service_started
+
+  # -------------------------------------------------------------------------
+  # PHP Trace — Build & test per PHP version
+  # -------------------------------------------------------------------------
+
+  # --- PHP 8.0 ---
+  php80:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        PHP_VERSION: "8.0"
+    image: php-trace:8.0
+    profiles: ["build"]
+
+  php80-test:
+    image: php-trace:8.0
+    profiles: ["test"]
+    command: php /test_trace.php
+    depends_on:
+      - loki
+      - tempo
+    networks:
+      - php-trace-net
+    environment:
+      - PHP_TRACE_LOKI_ENDPOINT=http://loki:3100/loki/api/v1/push
+      - PHP_TRACE_EXPORTER=loki
+      - PHP_TRACE_TEMPO_ENDPOINT=http://tempo:3200/api/v2/spans
+
+  # --- PHP 8.1 ---
+  php81:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        PHP_VERSION: "8.1"
+    image: php-trace:8.1
+    profiles: ["build"]
+
+  php81-test:
+    image: php-trace:8.1
+    profiles: ["test"]
+    command: php /test_trace.php
+    depends_on:
+      - loki
+      - tempo
+    networks:
+      - php-trace-net
+    environment:
+      - PHP_TRACE_LOKI_ENDPOINT=http://loki:3100/loki/api/v1/push
+      - PHP_TRACE_EXPORTER=loki
+      - PHP_TRACE_TEMPO_ENDPOINT=http://tempo:3200/api/v2/spans
+
+  # --- PHP 8.2 ---
+  php82:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        PHP_VERSION: "8.2"
+    image: php-trace:8.2
+    profiles: ["build"]
+
+  php82-test:
+    image: php-trace:8.2
+    profiles: ["test"]
+    command: php /test_trace.php
+    depends_on:
+      - loki
+      - tempo
+    networks:
+      - php-trace-net
+    environment:
+      - PHP_TRACE_LOKI_ENDPOINT=http://loki:3100/loki/api/v1/push
+      - PHP_TRACE_EXPORTER=loki
+      - PHP_TRACE_TEMPO_ENDPOINT=http://tempo:3200/api/v2/spans
+
+  # --- PHP 8.3 ---
+  php83:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        PHP_VERSION: "8.3"
+    image: php-trace:8.3
+    profiles: ["build"]
+
+  php83-test:
+    image: php-trace:8.3
+    profiles: ["test"]
+    command: php /test_trace.php
+    depends_on:
+      - loki
+      - tempo
+    networks:
+      - php-trace-net
+    environment:
+      - PHP_TRACE_LOKI_ENDPOINT=http://loki:3100/loki/api/v1/push
+      - PHP_TRACE_EXPORTER=loki
+      - PHP_TRACE_TEMPO_ENDPOINT=http://tempo:3200/api/v2/spans
+
+  # --- PHP 8.4 ---
+  php84:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        PHP_VERSION: "8.4"
+    image: php-trace:8.4
+    profiles: ["build"]
+
+  php84-test:
+    image: php-trace:8.4
+    profiles: ["test"]
+    command: php /test_trace.php
+    depends_on:
+      - loki
+      - tempo
+    networks:
+      - php-trace-net
+    environment:
+      - PHP_TRACE_LOKI_ENDPOINT=http://loki:3100/loki/api/v1/push
+      - PHP_TRACE_EXPORTER=loki
+      - PHP_TRACE_TEMPO_ENDPOINT=http://tempo:3200/api/v2/spans
+
+  # -------------------------------------------------------------------------
+  # All-in-one: build ALL versions then run ALL tests
+  # -------------------------------------------------------------------------
+  build-all:
+    image: alpine:latest
+    profiles: ["all"]
+    command: >
+      sh -c "
+      echo 'Use: docker compose -f docker/docker-compose.yml build php80 php81 php82 php83 php84'
+      "
+    depends_on: []
+
+networks:
+  php-trace-net:
+    driver: bridge

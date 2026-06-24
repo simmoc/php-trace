@@ -1,0 +1,53 @@
+// config.w32 — PHP Trace Extension (Windows)
+//
+// Build with:
+//   configure --enable-php-trace --with-curl=<path>
+//   nmake
+//
+
+ARG_ENABLE("php-trace", "PHP Trace support", "no");
+
+if (PHP_PHP_TRACE != "no") {
+    // ------------------------------------------------------------------
+    // Check for libcurl
+    // ------------------------------------------------------------------
+    if (CHECK_LIB("libcurl.lib", "php_trace", PHP_PHP_TRACE) &&
+        CHECK_HEADER_ADD_INCLUDE("curl/curl.h", CFLAGS_PHP_PHP_TRACE)) {
+        AC_DEFINE("HAVE_CURL", 1, "libcurl support");
+    } else {
+        WARNING("libcurl not found; php_trace will have no Loki export");
+    }
+
+    // ------------------------------------------------------------------
+    // Compiler flags
+    // ------------------------------------------------------------------
+    var cxxflags = "/std:c++17 /EHsc /W3 /O2 /D_CRT_SECURE_NO_WARNINGS /D_WINSOCK_DEPRECATED_NO_WARNINGS";
+
+    if (PHP_PHP_TRACE_SHARED) {
+        EXTENSION("php_trace",
+            "src\\span.cpp " +
+            "src\\span_buffer.cpp " +
+            "src\\loki_exporter.cpp " +
+            "src\\php_trace.cpp",
+            null,
+            cxxflags);
+        AC_DEFINE("COMPILE_DL_PHP_TRACE", 1, "Build as shared extension");
+    } else {
+        // Static build into PHP binary
+        var sources = "src\\span.cpp src\\span_buffer.cpp src\\loki_exporter.cpp src\\php_trace.cpp";
+        ADD_SOURCES("ext/php_trace", sources, "php_trace");
+    }
+
+    ADD_FLAG("CFLAGS_PHP_PHP_TRACE", cxxflags);
+
+    // Include path
+    ADD_FLAG("INCLUDES", "/I " + configure_module_dirname + "/include");
+
+    // Link libraries
+    if (CHECK_LIB("ws2_32.lib", "php_trace", PHP_PHP_TRACE)) {
+        // Windows sockets for curl
+    }
+    if (CHECK_LIB("crypt32.lib", "php_trace", PHP_PHP_TRACE)) {
+        // Crypto API for curl SSL
+    }
+}
