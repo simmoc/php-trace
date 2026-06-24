@@ -8,31 +8,31 @@
 ┌──────────────────────────────────────────────────────────────────┐
 │                        PHP Runtime                               │
 │                                                                  │
-│  zend_execute_ex (Hook)                                         │
+│  zend_execute_ex (Hook)                                          │
 │       │                    ▲                                     │
 │       ▼                    │                                     │
-│  [Span Start] ──► 用户函数执行 ──► [Span End]                    │
+│  [Span Start] ──► 用户函数执行 ──► [Span End]                     │
 │                                                                  │
-│       │ push                                                      │
+│       │ push                                                     │
 │       ▼                                                          │
 │  ┌─────────────────────────────────────────┐                     │
-│  │   Thread-Safe Ring Buffer (65536 slots)  │                     │
-│  │   SPSC + Mutex for multi-producer        │                     │
+│  │   Thread-Safe Ring Buffer (65536 slots)  │                    │
+│  │   SPSC + Mutex for multi-producer        │                    │
 │  └──────────────────┬──────────────────────┘                     │
-│                     │ drain (batch)                               │
-│                     ▼                                             │
+│                     │ drain (batch)                              │
+│                     ▼                                            │
 │  ┌─────────────────────────────────────────┐                     │
-│  │   Loki Exporter (Background Thread)      │                     │
+│  │   Loki Exporter (Background Thread)      │                    │
 │  │   - JSON payload builder                │                     │
-│  │   - HTTP POST /loki/api/v1/push          │                     │
+│  │   - HTTP POST /loki/api/v1/push          │                    │
 │  │   - Retry + error handling              │                     │
 │  └──────────────────┬──────────────────────┘                     │
 └─────────────────────┼────────────────────────────────────────────┘
                       │ HTTP
                       ▼
               ┌──────────────┐     ┌──────────────┐
-              │  Loki (3100) │────▶│  Grafana      │
-              │  日志存储      │     │  可视化看板    │
+              │  Loki (3100) │────▶│  Grafana     │
+              │   日志存储   │     │  可视化看板    │
               └──────────────┘     └──────────────┘
 ```
 
@@ -97,6 +97,19 @@ mkdir build && cd build
 cmake .. -DPHP_CONFIG=/usr/bin/php-config
 cmake --build . -j$(nproc)
 sudo cmake --install .
+```
+
+**方式 C: PIE（适合打包/分发）**
+
+```bash
+cd php-trace
+pie install
+```
+
+PIE 会按标准 PHP 扩展流程执行 `phpize`、`./configure`、`make` 和 `make install`。如果你想在本仓库内直接验证 PIE 清单，也可以先安装 Composer 依赖并运行：
+
+```bash
+composer validate
 ```
 
 ### 3. 配置 PHP

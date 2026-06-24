@@ -1,0 +1,22 @@
+{
+  "name": "php-trace/php-trace",
+  "description": "PHP tracing extension with Loki and Tempo export support",
+  "type": "php-ext",
+  "license": "MIT",
+  "require": {
+    "php": "^8.0"
+  },
+  "php-ext": {
+    "extension-name": "php_trace",
+    "priority": 20,
+    "support-zts": true,
+    "support-nts": true,
+    "configure-options": [
+      {
+        "name": "enable-php-trace",
+        "description": "Enable the php_trace extension",
+        "needs-value": false
+      }
+    ]
+  }
+}
