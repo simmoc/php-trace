@@ -2,6 +2,8 @@
 
 一个用 C++ 实现的 PHP trace 跟踪扩展，自动捕获函数调用的时序信息，并通过 HTTP 推送到 [Grafana Loki](https://grafana.com/oss/loki/) 或 [Grafana Tempo](https://grafana.com/oss/tempo/) 进行存储和可视化。
 
+![alt text](image/image.png)
+
 ## 架构
 
 ```
