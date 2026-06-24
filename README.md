@@ -106,10 +106,16 @@ cd php-trace
 pie install
 ```
 
-PIE 会按标准 PHP 扩展流程执行 `phpize`、`./configure`、`make` 和 `make install`。如果你想在本仓库内直接验证 PIE 清单，也可以先安装 Composer 依赖并运行：
+PIE 会按标准 PHP 扩展流程执行 `phpize`、`./configure`、`make` 和 `make install`。推荐先检查清单是否有效：
 
 ```bash
-composer validate
+composer validate --strict
+```
+
+如果你希望从一个临时目录安装这个扩展，也可以使用：
+
+```bash
+pie install ./path/to/php-trace
 ```
 
 ### 3. 配置 PHP
@@ -262,6 +268,50 @@ php_trace_finalize_span($spanId, 1); // 1=OK, 2=ERROR
 # 按操作名称聚合
 sum by (operation) (count_over_time({job="php-trace"} | json [5m]))
 ```
+
+## 发布与版本管理
+
+### 版本标签
+
+推荐使用语义化版本标签，例如：
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+推送标签后，GitHub Actions 会自动触发完整发布流程，并在 GitHub Release 中附带构建产物。
+
+### 自动发布流程
+
+仓库现在包含两条工作流：
+
+- [.github/workflows/pie-build.yml](.github/workflows/pie-build.yml)
+- [.github/workflows/packagist-publish.yml](.github/workflows/packagist-publish.yml)
+
+完整流程如下：
+
+1. 推送 `v*` 标签，或手动触发 `workflow_dispatch`
+2. 执行 `composer validate --strict`
+3. 在 PHP 8.1 / 8.2 / 8.3 上构建扩展
+4. 运行 `phpize` + `./configure` + `make`
+5. 上传构建产物到 GitHub Actions
+6. 创建 GitHub Release
+7. 若设置了 `PACKAGIST_TOKEN`，将自动向 Packagist 发起更新请求
+
+### Packagist 发布前准备
+
+1. 在 GitHub 仓库设置中新增 Secrets：`PACKAGIST_TOKEN`
+2. 确保仓库已经在 Packagist 上提交过，或使用 Packagist 的 GitHub 集成
+3. 通过标签发布触发自动流程
+
+### 发布检查清单
+
+- [ ] 更新 `composer.json` 中的版本信息（如果你后续引入版本字段）
+- [ ] 确认 `composer validate --strict` 通过
+- [ ] 推送标签并确认 GitHub Actions 正常执行
+- [ ] 检查 GitHub Release 是否生成
+- [ ] 检查 Packagist 是否收到更新
 
 ## 生产环境建议
 

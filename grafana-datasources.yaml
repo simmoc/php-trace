@@ -17,19 +17,3 @@ datasources:
     type: tempo
     access: proxy
     url: http://tempo:3200
-    editable: true
-    jsonData:
-      serviceMap:
-        datasourceUid: "loki"
-      tracesToLogs:
-        datasourceUid: "loki"
-        tags: ["job", "service.name"]
-        mappedTags: [{ key: "service.name", value: "service" }]
-        mapTagNames: true
-        spanStartTimeShift: "1h"
-        spanEndTimeShift: "1h"
-        filterByTraceID: true
-      tracesToMetrics:
-        datasourceUid: "loki"
-      nodeGraph:
-        enabled: true

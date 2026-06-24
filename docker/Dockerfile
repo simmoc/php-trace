@@ -21,7 +21,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy extension source
+# Copy extension source (ARG CACHEBUST invalidates cache when source changes)
+ARG CACHEBUST=0
 WORKDIR /build
 COPY include/      ./include/
 COPY src/          ./src/
@@ -44,7 +45,13 @@ RUN docker-php-ext-enable php_trace \
     && echo "php_trace.enabled=1" >> "${INI_FILE}" \
     && echo "php_trace.loki.endpoint=http://localhost:3100/loki/api/v1/push" >> "${INI_FILE}" \
     && echo "php_trace.service_name=php-\${PHP_VERSION}-app" >> "${INI_FILE}" \
+    && echo "php_trace.trace_user=1" >> "${INI_FILE}" \
+    && echo "php_trace.trace_internal=1" >> "${INI_FILE}" \
+    && echo "php_trace.include_pattern=.*" >> "${INI_FILE}" \
     && echo "php_trace.sample_rate=1.0" >> "${INI_FILE}"
+
+ENV PHP_TRACE_EXPORTER=tempo
+ENV PHP_TRACE_TEMPO_ENDPOINT=http://tempo:4318/v1/traces
 
 # Verify installation
 RUN php -m | grep php_trace && php --ri php_trace

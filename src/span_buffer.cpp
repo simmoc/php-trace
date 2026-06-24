@@ -23,8 +23,6 @@ SpanBuffer::~SpanBuffer() = default;
 // ---------------------------------------------------------------------------
 bool SpanBuffer::try_push(Span &&span)
 {
-    total_pushed_.fetch_add(1, std::memory_order_relaxed);
-
     std::lock_guard<std::mutex> lock(producer_mutex_);
     
     size_t w = write_pos_.load(std::memory_order_relaxed);
@@ -41,6 +39,8 @@ bool SpanBuffer::try_push(Span &&span)
     slots_[w].has_data.store(true, std::memory_order_release);
     write_pos_.store(next, std::memory_order_release);
     
+    total_pushed_.fetch_add(1, std::memory_order_relaxed);
+    
     // Notify consumer
     consumer_cv_.notify_one();
     
@@ -49,8 +49,6 @@ bool SpanBuffer::try_push(Span &&span)
 
 bool SpanBuffer::push(Span &&span, int timeout_ms)
 {
-    total_pushed_.fetch_add(1, std::memory_order_relaxed);
-
     std::unique_lock<std::mutex> lock(producer_mutex_);
     
     auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
@@ -64,6 +62,7 @@ bool SpanBuffer::push(Span &&span, int timeout_ms)
             slots_[w].span = std::move(span);
             slots_[w].has_data.store(true, std::memory_order_release);
             write_pos_.store(next, std::memory_order_release);
+            total_pushed_.fetch_add(1, std::memory_order_relaxed);
             consumer_cv_.notify_one();
             return true;
         }

@@ -125,11 +125,15 @@ echo "    Result: {$result}, Time: " . round($elapsed, 2) . "ms\n\n";
 // Test 2: Class methods
 echo "[3] Testing class method tracing...\n";
 $service = new OrderService("order-service-1");
-$order = $service->createOrder([
-    ['name' => 'Widget A', 'price' => 19.99, 'qty' => 2],
-    ['name' => 'Widget B', 'price' => 49.99, 'qty' => 1],
-]);
-echo "    Order created: id={$order['id']}, total=\${$order['total']}\n";
+try {
+    $order = $service->createOrder([
+        ['name' => 'Widget A', 'price' => 19.99, 'qty' => 2],
+        ['name' => 'Widget B', 'price' => 49.99, 'qty' => 1],
+    ]);
+    echo "    Order created: id={$order['id']}, total=\${$order['total']}\n";
+} catch (\Throwable $e) {
+    echo "    Order creation failed: {$e->getMessage()}\n";
+}
 echo "    Service: {$service->getName()}\n\n";
 
 // Test 3: Manual span
@@ -157,6 +161,7 @@ echo "\n";
 
 echo "========================================\n";
 echo "  Test Complete.\n";
+echo "  Check Tempo at: http://localhost:3200\n";
 echo "  Check Loki at: http://localhost:3100\n";
 echo "  Labels: {job=\"php-trace\"}\n";
 echo "========================================\n";

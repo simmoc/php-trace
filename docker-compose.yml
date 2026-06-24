@@ -68,14 +68,15 @@ services:
     container_name: php-trace-83
     volumes:
       - ./:/usr/src/myapp
-      - ./php_trace.ini:/usr/local/etc/php/conf.d/php_trace.ini
     working_dir: /usr/src/myapp
-    command: php test_trace.php
-    restart: unless-stopped
+    command: php test_tempo_verify.php
+    restart: no
     environment:
       - PHP_TRACE_LOKI_ENDPOINT=http://loki:3100/loki/api/v1/push
-      - PHP_TRACE_EXPORTER=loki
-      - PHP_TRACE_TEMPO_ENDPOINT=http://tempo:3200/api/v2/spans
+      - PHP_TRACE_EXPORTER=tempo
+      - PHP_TRACE_TEMPO_ENDPOINT=http://tempo:4318/v1/traces
+      - PHP_TRACE_CAPTURE_ARGS=1
+      - PHP_TRACE_CAPTURE_RETURN=1
     networks:
       - monitoring
     depends_on:
